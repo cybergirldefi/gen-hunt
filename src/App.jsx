@@ -1,10 +1,28 @@
-import { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { readContract, writeContract, waitTx, switchToBradbury } from './lib/gl.js'
 import { CONTRACT_ADDR, sh, LEVELS, LEVEL_XP_THRESHOLD } from './lib/config.js'
 import SoloMode    from './components/SoloMode.jsx'
 import HuntMode    from './components/HuntMode.jsx'
 import Profile     from './components/Profile.jsx'
 import Leaderboard from './components/Leaderboard.jsx'
+
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null } }
+  static getDerivedStateFromError(e) { return { error: e } }
+  render() {
+    if (this.state.error) return (
+      <div style={{ padding:40, color:'#EF4444', fontFamily:'monospace' }}>
+        <h2>Render Error</h2>
+        <pre style={{ marginTop:16, whiteSpace:'pre-wrap', fontSize:13, color:'#94A3B8' }}>
+          {this.state.error.message}
+          {this.state.error.stack}
+        </pre>
+      </div>
+    )
+    return this.props.children
+  }
+}
+
 
 function Toast({ msg, type, onClear }) {
   useEffect(() => { if (!msg) return; const t = setTimeout(onClear, 4000); return () => clearTimeout(t) }, [msg])
@@ -287,6 +305,7 @@ export default function App() {
   const sharedProps = { account, connected, player, notify, loadPlayer, txBusy, setTxBusy }
 
   return (
+    <ErrorBoundary>
     <div className="app">
       <Header account={account} connected={connected} player={player}
               view={view} setView={setView}
@@ -326,5 +345,6 @@ export default function App() {
 
       <Toast msg={toast.msg} type={toast.type} onClear={() => setToast({msg:'',type:'ok'})} />
     </div>
+    </ErrorBoundary>
   )
 }
