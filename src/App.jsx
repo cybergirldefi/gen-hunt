@@ -71,7 +71,7 @@ function Header({ account, connected, player, view, setView, onConnect, onDiscon
   )
 }
 
-function Home({ connected, player, setView, onConnect }) {
+function Home({ account, connected, player, setView, onConnect }) {
   const level  = player?.level || 1
   const xp     = player?.xp || 0
   const nextXP = LEVEL_XP_THRESHOLD[String(level + 1)]
@@ -312,7 +312,7 @@ export default function App() {
               onConnect={connectWallet} onDisconnect={disconnect} />
 
       <main className="main">
-        {view==='home'        && <Home {...sharedProps} setView={setView} onConnect={connectWallet} />}
+        {view==='home'        && <Home {...sharedProps} account={account} setView={setView} onConnect={connectWallet} />}
         {view==='solo'        && <SoloMode {...sharedProps} setView={setView} />}
         {view==='hunt'        && <HuntMode {...sharedProps} setView={setView} />}
         {view==='profile'     && <Profile {...sharedProps} setView={setView} />}
