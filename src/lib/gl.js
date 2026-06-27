@@ -182,7 +182,7 @@ export async function writeContract(addr, account, method, args=[], valueWei=0n,
 }
 
 // ── Wait for tx ───────────────────────────────────────────────────────────
-export async function waitTx(hash, onSlow, tries=80) {
+export async function waitTx(hash, onSlow, tries=120) {
   for (let i=0; i<tries; i++) {
     await new Promise(r=>setTimeout(r,3000))
     if (i===10 && onSlow) onSlow()
