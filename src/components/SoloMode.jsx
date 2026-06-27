@@ -53,7 +53,8 @@ export default function SoloMode({ account, connected, player, notify, loadPlaye
       const totalQ = await readContract(CONTRACT_ADDR, 'get_total_players', [])
       const qCount = parseInt(totalQ || '0')
       // The newest question ID is q(qCount-1)
-      for (let i = qCount-1; i >= Math.max(0, qCount-5); i--) {
+      let found = false
+      for (let i = qCount-1; i >= Math.max(0, qCount-10); i--) {
         const raw = await readContract(CONTRACT_ADDR, 'get_question', [`q${i}`])
         if (raw && raw !== 'NOT_FOUND') {
           const q = JSON.parse(raw)
@@ -61,10 +62,12 @@ export default function SoloMode({ account, connected, player, notify, loadPlaye
             setQuestion(q)
             setQId(`q${i}`)
             setPhase('question')
+            found = true
             break
           }
         }
       }
+      if (!found) throw new Error('Question generated but could not be read — try again')
     } catch(e) {
       notify(e.message || 'Failed to generate question', 'err')
       setPhase('levels')
