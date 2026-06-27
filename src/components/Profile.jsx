@@ -1,4 +1,5 @@
 import { LEVELS, LEVEL_XP_THRESHOLD, sh } from '../lib/config.js'
+import { LevelIcon, StatIcon } from '../App.jsx'
 
 export default function Profile({ account, player, setView }) {
   if (!player) return null
@@ -15,21 +16,14 @@ export default function Profile({ account, player, setView }) {
       </button>
 
       <div className="card card-indigo" style={{ marginBottom:14 }}>
-        <div style={{ display:'flex', alignItems:'center', gap:16, marginBottom:20 }}>
-          <div style={{ width:56,height:56, borderRadius:14,
-            background:`${LEVELS[String(level)]?.color}12`,
-            border:`1px solid ${LEVELS[String(level)]?.color}30`,
-            display:'flex', alignItems:'center', justifyContent:'center',
-            fontFamily:'JetBrains Mono', fontWeight:800, fontSize:20,
-            color: LEVELS[String(level)]?.color }}>
-            {level}
-          </div>
+        <div style={{ display:'flex', alignItems:'center', gap:14, marginBottom:20 }}>
+          <LevelIcon level={level} size={56} active/>
           <div>
             <div style={{ fontSize:18, fontWeight:800, letterSpacing:'-0.3px' }}>
               {player.username || sh(account)}
             </div>
             <div style={{ marginTop:6 }}>
-              <span className={`pill level-${level}`}>
+              <span className={`pill level-${Math.min(level,5)}`}>
                 Level {level} — {LEVELS[String(level)]?.name}
               </span>
             </div>
@@ -40,7 +34,7 @@ export default function Profile({ account, player, setView }) {
           <div style={{ display:'flex', justifyContent:'space-between', fontSize:11,
             color:'var(--text2)', fontFamily:'JetBrains Mono', marginBottom:6 }}>
             <span>{xp.toLocaleString()} XP</span>
-            <span>{level < 5 ? `${nextXP?.toLocaleString()} to Level ${level+1}` : 'Max Level'}</span>
+            <span>{level < 8 ? `${nextXP?.toLocaleString()} to Level ${level+1}` : 'Max Level'}</span>
           </div>
           <div className="xp-bar-track">
             <div className="xp-bar-fill" style={{ width:`${prog}%` }} />
@@ -49,19 +43,20 @@ export default function Profile({ account, player, setView }) {
 
         <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:10, marginTop:20 }}>
           {[
-            [player.total_correct||0,  'Correct'],
-            [player.total_answered||0, 'Answered'],
-            [player.best_streak||0,    'Best Streak'],
-            [player.hunt_played||0,    'Hunts'],
-            [player.hunt_wins||0,      'Hunt Wins'],
-            [(player.levels_completed||[]).length, 'Levels Done'],
-          ].map(([val, label]) => (
+            ['correct',   player.total_correct||0,  'Correct'],
+            ['streak',    player.best_streak||0,     'Best Streak'],
+            ['xp',        (player.levels_completed||[]).length+'/8', 'Levels Done'],
+            ['correct',   player.total_answered||0,  'Answered'],
+            ['streak',    player.streak||0,           'Streak'],
+            ['wins',      xp.toLocaleString(),        'Total XP'],
+          ].map(([icon, val, label]) => (
             <div key={label} style={{ background:'rgba(255,255,255,0.03)',
               borderRadius:10, padding:'12px 14px',
               border:'1px solid rgba(255,255,255,0.06)', textAlign:'center' }}>
-              <div style={{ fontSize:20, fontWeight:800, fontFamily:'JetBrains Mono',
-                color:'#A5B4FC', marginBottom:4 }}>{val}</div>
-              <div style={{ fontSize:11, color:'var(--text2)' }}>{label}</div>
+              <StatIcon type={icon} size={16}/>
+              <div style={{ fontSize:18, fontWeight:800, fontFamily:'JetBrains Mono',
+                color:'#A5B4FC', margin:'6px 0 3px' }}>{val}</div>
+              <div style={{ fontSize:10, color:'var(--text2)' }}>{label}</div>
             </div>
           ))}
         </div>
@@ -70,31 +65,21 @@ export default function Profile({ account, player, setView }) {
       <div className="card">
         <div style={{ fontSize:11, color:'var(--text2)', fontFamily:'JetBrains Mono',
           marginBottom:14, letterSpacing:'0.5px' }}>LEVEL PROGRESS</div>
-        {['1','2','3','4','5'].map((l,i) => {
+        {Object.entries(LEVELS).map(([l, lvl], i) => {
           const done   = (player.levels_completed||[]).includes(l)
           const locked = parseInt(l) > (player.level||1) && !done
+          const cur    = String(player.level||1) === l && !done
           return (
             <div key={l} style={{ display:'flex', alignItems:'center', gap:12,
-              padding:'12px 0',
-              borderBottom: i < 4 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}>
-              <div style={{ width:28,height:28, borderRadius:7, flexShrink:0,
-                background: done ? `${LEVELS[l].color}15` : 'rgba(255,255,255,0.03)',
-                border:`1px solid ${done ? LEVELS[l].color+'40' : 'rgba(255,255,255,0.07)'}`,
-                display:'flex', alignItems:'center', justifyContent:'center',
-                fontSize:11, fontFamily:'JetBrains Mono', fontWeight:700,
-                color: done ? LEVELS[l].color : 'var(--text2)' }}>
-                {done ? '✓' : l}
-              </div>
+              padding:'10px 0',
+              borderBottom: i < 7 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}>
+              <LevelIcon level={parseInt(l)} size={32} done={done} active={cur} locked={locked}/>
               <div style={{ flex:1 }}>
-                <div style={{ fontWeight:600, fontSize:14 }}>
-                  Level {l} — {LEVELS[l].name}
-                </div>
-                <div style={{ fontSize:12, color:'var(--text2)', marginTop:2 }}>
-                  {LEVELS[l].topic}
-                </div>
+                <div style={{ fontWeight:600, fontSize:13 }}>Level {l} — {lvl.name}</div>
+                <div style={{ fontSize:11, color:'var(--text2)', marginTop:1 }}>{lvl.topic}</div>
               </div>
-              <span style={{ fontSize:12, fontFamily:'JetBrains Mono',
-                color: done ? 'var(--green)' : locked ? 'var(--text2)' : LEVELS[l].color }}>
+              <span style={{ fontSize:11, fontFamily:'JetBrains Mono',
+                color: done ? 'var(--green)' : locked ? 'rgba(100,116,139,0.5)' : lvl.color }}>
                 {done ? 'Complete' : locked ? 'Locked' : 'In Progress'}
               </span>
             </div>
