@@ -196,7 +196,11 @@ function Home({ account, connected, player, setView, onConnect }) {
 
       {/* Player progress */}
       {connected && player && (
-        <div className="card card-indigo fade-up" style={{ maxWidth:580, marginBottom:56, animationDelay:'.3s' }}>
+        <div className="card card-indigo fade-up" style={{ maxWidth:580, marginBottom:56, animationDelay:'.3s',
+          cursor:'pointer', transition:'transform .2s, box-shadow .2s' }}
+          onClick={() => setView('solo')}
+          onMouseEnter={e=>{ e.currentTarget.style.transform='translateY(-2px)'; e.currentTarget.style.boxShadow='0 12px 40px rgba(99,102,241,0.15)' }}
+          onMouseLeave={e=>{ e.currentTarget.style.transform=''; e.currentTarget.style.boxShadow='' }}>
           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
             <div>
               <div style={{ fontSize:13, color:'var(--text2)', marginBottom:6 }}>
@@ -220,6 +224,14 @@ function Home({ account, connected, player, setView, onConnect }) {
             fontSize:11, color:'var(--text2)', fontFamily:'JetBrains Mono' }}>
             <span>{xp.toLocaleString()}</span>
             <span>{level < 8 ? `${nextXP?.toLocaleString()} to Level ${level+1}` : 'Max Level — Shadow'}</span>
+          </div>
+          <div style={{ marginTop:14, paddingTop:14, borderTop:'1px solid rgba(255,255,255,0.05)',
+            display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+            <span style={{ fontSize:12, color:'var(--text2)' }}>
+              Continue from Level {level} — {LEVELS[String(level)]?.name}
+            </span>
+            <span style={{ fontSize:12, color:'var(--indigo)', fontFamily:'JetBrains Mono',
+              fontWeight:600 }}>Train →</span>
           </div>
           <div style={{ display:'flex', gap:20, marginTop:16, paddingTop:16,
             borderTop:'1px solid rgba(255,255,255,0.05)' }}>
