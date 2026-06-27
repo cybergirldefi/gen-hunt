@@ -2,10 +2,85 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { readContract, writeContract, waitTx, switchToBradbury } from './lib/gl.js'
 import { CONTRACT_ADDR, sh, LEVELS, LEVEL_XP_THRESHOLD } from './lib/config.js'
 import SoloMode    from './components/SoloMode.jsx'
-import HuntMode    from './components/HuntMode.jsx'
 import Profile     from './components/Profile.jsx'
 import Leaderboard from './components/Leaderboard.jsx'
 import Mascot      from './components/Mascot.jsx'
+
+// ── Level ring icon ───────────────────────────────────────────────────────
+export function LevelIcon({ level, size=32, done, locked, active }) {
+  const lvl   = LEVELS[String(level)] || LEVELS['1']
+  const color = locked ? 'rgba(100,116,139,0.4)' : lvl.color
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" style={{ flexShrink:0 }}>
+      <circle cx="16" cy="16" r="13" fill="none"
+        stroke={color} strokeWidth={active ? 2.5 : 1.5}
+        strokeDasharray={done ? 'none' : '3 2'} opacity={locked ? 0.4 : 1}/>
+      {done && <circle cx="16" cy="16" r="9" fill={color} opacity="0.15"/>}
+      {active && <circle cx="16" cy="16" r="5" fill={color} opacity="0.35"
+        style={{ animation:'pulse 2s ease infinite' }}/>}
+      <text x="16" y="20" textAnchor="middle" fontSize="10"
+        fontFamily="JetBrains Mono" fontWeight="700"
+        fill={locked ? 'rgba(100,116,139,0.5)' : color}>
+        {done ? '✓' : String(level)}
+      </text>
+    </svg>
+  )
+}
+
+// ── Score ring ────────────────────────────────────────────────────────────
+export function ScoreRing({ score, total, color='#6366F1', size=100 }) {
+  const pct = total > 0 ? score / total : 0
+  const r   = 40
+  const circ= 2 * Math.PI * r
+  const dash= pct * circ
+  return (
+    <svg width={size} height={size} viewBox="0 0 100 100">
+      <circle cx="50" cy="50" r={r} fill="none"
+        stroke="rgba(255,255,255,0.06)" strokeWidth="8"/>
+      <circle cx="50" cy="50" r={r} fill="none"
+        stroke={color} strokeWidth="8"
+        strokeDasharray={`${dash} ${circ}`}
+        strokeLinecap="round"
+        style={{ transform:'rotate(-90deg)', transformOrigin:'center',
+          transition:'stroke-dasharray .8s cubic-bezier(.4,0,.2,1)' }}/>
+      <text x="50" y="46" textAnchor="middle" fontSize="18"
+        fontFamily="JetBrains Mono" fontWeight="800" fill="white">{score}</text>
+      <text x="50" y="60" textAnchor="middle" fontSize="10"
+        fontFamily="JetBrains Mono" fill="rgba(255,255,255,0.4)">of {total}</text>
+    </svg>
+  )
+}
+
+// ── Stat icon ─────────────────────────────────────────────────────────────
+export function StatIcon({ type, size=20 }) {
+  const s = size
+  if (type === 'streak') return (
+    <svg width={s} height={s} viewBox="0 0 20 20" fill="none">
+      <path d="M10 2 C6 6 4 9 6 12 C7 14 9 14 10 13 C9 11 10 9 12 8 C12 11 11 13 13 14 C15 13 16 11 15 8 C17 10 17 14 14 17 C12 19 8 19 6 17 C3 15 3 11 5 8 C7 5 9 3 10 2Z"
+        fill="rgba(245,158,11,0.8)" stroke="rgba(245,158,11,0.4)" strokeWidth="0.5"/>
+    </svg>
+  )
+  if (type === 'correct') return (
+    <svg width={s} height={s} viewBox="0 0 20 20" fill="none">
+      <circle cx="10" cy="10" r="8" stroke="rgba(16,185,129,0.6)" strokeWidth="1.5"/>
+      <path d="M6 10 L9 13 L14 7" stroke="rgba(16,185,129,0.9)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  )
+  if (type === 'wins') return (
+    <svg width={s} height={s} viewBox="0 0 20 20" fill="none">
+      <path d="M10 2 L12.5 7.5 L18 8.2 L14 12 L15 18 L10 15.5 L5 18 L6 12 L2 8.2 L7.5 7.5Z"
+        stroke="rgba(99,102,241,0.7)" strokeWidth="1.5" fill="rgba(99,102,241,0.1)" strokeLinejoin="round"/>
+    </svg>
+  )
+  if (type === 'xp') return (
+    <svg width={s} height={s} viewBox="0 0 20 20" fill="none">
+      <polygon points="10,2 13,8 19,8 14,12 16,18 10,14 4,18 6,12 1,8 7,8"
+        stroke="rgba(34,211,238,0.7)" strokeWidth="1.2" fill="rgba(34,211,238,0.08)"
+        strokeLinejoin="round"/>
+    </svg>
+  )
+  return null
+}
 
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { error: null } }
@@ -41,7 +116,7 @@ function Header({ account, connected, player, view, setView, onConnect, onDiscon
       </div>
 
       <nav style={{ display:'flex', gap:4 }}>
-        {[['solo','Solo'],['hunt','Hunt'],['leaderboard','Board']].map(([v,label]) => (
+        {[['solo','Train'],['leaderboard','Board']].map(([v,label]) => (
           <button key={v} className={`nav-btn${view===v?' active':''}`} onClick={() => setView(v)}>
             {label}
           </button>
@@ -52,7 +127,7 @@ function Header({ account, connected, player, view, setView, onConnect, onDiscon
         {connected && player?.username && (
           <button className="btn btn-ghost" style={{ gap:8, padding:'6px 12px' }}
                   onClick={() => setView('profile')}>
-            <span className={`pill level-${level}`} style={{ fontSize:10 }}>Lv.{level}</span>
+            <LevelIcon level={level} size={22} active/>
             <span style={{ fontSize:13, fontFamily:'JetBrains Mono', color:'#A5B4FC' }}>
               {(player.xp||0).toLocaleString()} XP
             </span>
@@ -86,7 +161,7 @@ function Home({ account, connected, player, setView, onConnect }) {
 
       {/* Hero */}
       <div style={{ display:'grid', gridTemplateColumns:'1fr auto', gap:40,
-        alignItems:'center', padding:'80px 0 64px' }}>
+        alignItems:'center', padding:'72px 0 56px' }}>
         <div>
           <div className="pill fade-up" style={{ marginBottom:20, display:'inline-flex',
             background:'rgba(99,102,241,0.06)', borderColor:'rgba(99,102,241,0.18)',
@@ -101,25 +176,19 @@ function Home({ account, connected, player, setView, onConnect }) {
           </h1>
           <p className="fade-up" style={{ fontSize:17, color:'var(--text2)', maxWidth:460,
             marginBottom:36, lineHeight:1.75, animationDelay:'.15s' }}>
-            AI-generated cybersecurity questions that never repeat.
-            5 levels of mastery. Battle others in real-time Hunt mode.
+            8 levels of AI-generated cybersecurity questions.
+            From basic phishing to nation-state attacks — earn XP on-chain.
           </p>
           <div className="fade-up" style={{ display:'flex', gap:12, flexWrap:'wrap', animationDelay:'.2s' }}>
             {connected ? (
-              <>
-                <button className="btn btn-primary" style={{ fontSize:15, padding:'12px 28px' }}
-                        onClick={() => setView('solo')}>Start Training</button>
-                <button className="btn btn-cyan"    style={{ fontSize:15, padding:'12px 28px' }}
-                        onClick={() => setView('hunt')}>Join a Hunt</button>
-              </>
+              <button className="btn btn-primary" style={{ fontSize:15, padding:'12px 32px' }}
+                      onClick={() => setView('solo')}>Start Training</button>
             ) : (
               <button className="btn btn-primary" style={{ fontSize:16, padding:'13px 36px' }}
                       onClick={onConnect}>Connect Wallet</button>
             )}
           </div>
         </div>
-
-        {/* Mascot */}
         <div className="fade-up" style={{ animationDelay:'.25s' }}>
           <Mascot size={160} style={{ filter:'drop-shadow(0 0 40px rgba(99,102,241,0.2))' }}/>
         </div>
@@ -131,10 +200,11 @@ function Home({ account, connected, player, setView, onConnect }) {
           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
             <div>
               <div style={{ fontSize:13, color:'var(--text2)', marginBottom:6 }}>
-                Welcome back,{' '}
-                <strong style={{ color:'var(--text)' }}>{player.username || sh(account)}</strong>
+                Welcome back, <strong style={{ color:'var(--text)' }}>{player.username || sh(account)}</strong>
               </div>
-              <span className={`pill level-${level}`}>Level {level} — {LEVELS[String(level)]?.name}</span>
+              <span className={`pill level-${Math.min(level,5)}`}>
+                Level {level} — {LEVELS[String(level)]?.name}
+              </span>
             </div>
             <div style={{ textAlign:'right' }}>
               <div style={{ fontSize:26, fontWeight:800, fontFamily:'JetBrains Mono', color:'#A5B4FC' }}>
@@ -149,77 +219,68 @@ function Home({ account, connected, player, setView, onConnect }) {
           <div style={{ display:'flex', justifyContent:'space-between', marginTop:6,
             fontSize:11, color:'var(--text2)', fontFamily:'JetBrains Mono' }}>
             <span>{xp.toLocaleString()}</span>
-            <span>{level < 5 ? `${nextXP?.toLocaleString()} to Level ${level+1}` : 'Max Level'}</span>
+            <span>{level < 8 ? `${nextXP?.toLocaleString()} to Level ${level+1}` : 'Max Level — Shadow'}</span>
           </div>
-          <div style={{ display:'flex', gap:24, marginTop:16, paddingTop:16,
+          <div style={{ display:'flex', gap:20, marginTop:16, paddingTop:16,
             borderTop:'1px solid rgba(255,255,255,0.05)' }}>
             {[
-              ['Streak',       player.streak||0],
-              ['Correct',      player.total_correct||0],
-              ['Hunt Wins',    player.hunt_wins||0],
-            ].map(([label,val]) => (
-              <div key={label}>
-                <span style={{ fontFamily:'JetBrains Mono', fontWeight:700, fontSize:16 }}>{val}</span>
-                <span style={{ fontSize:12, color:'var(--text2)', marginLeft:6 }}>{label}</span>
+              ['streak','streak', player.streak||0],
+              ['correct','correct', player.total_correct||0],
+              ['wins','xp', (player.levels_completed||[]).length + ' / 8'],
+            ].map(([key, icon, val]) => (
+              <div key={key} style={{ display:'flex', alignItems:'center', gap:8 }}>
+                <StatIcon type={icon} size={18}/>
+                <span style={{ fontFamily:'JetBrains Mono', fontWeight:700, fontSize:15 }}>{val}</span>
+                <span style={{ fontSize:11, color:'var(--text2)' }}>
+                  {key==='streak'?'Streak':key==='correct'?'Correct':'Levels'}
+                </span>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* Mode cards */}
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))',
-        gap:14, marginBottom:56 }}>
-        {[
-          {
-            key: 'solo', label:'Solo Training', sub:'btn-primary-outline',
-            desc:'5 levels of AI-generated cybersecurity questions. Earn XP, build streaks, unlock harder levels. Every question is unique.',
-            action: () => connected ? setView('solo') : onConnect(),
-            cta:'Start Training',
-            border:'rgba(99,102,241,0.2)', shadow:'rgba(99,102,241,0.08)',
-            badges: ['1','2','3','4','5'].map(l => ({ label: LEVELS[l].name, cls:`level-${l}` })),
-          },
-          {
-            key: 'hunt', label:'Hunt Mode', sub:'',
-            desc:'Same questions for every player. Fastest and most correct wins. Results recorded on-chain permanently.',
-            action: () => connected ? setView('hunt') : onConnect(),
-            cta:'Join a Hunt',
-            border:'rgba(34,211,238,0.18)', shadow:'rgba(34,211,238,0.06)',
-            badges: [{ label:'Multiplayer', cls:'level-2' }, { label:'On-chain', cls:'level-4' }],
-          },
-        ].map(m => (
-          <div key={m.key} className="card" style={{
-            borderColor: m.border, cursor:'pointer',
-            transition:'transform .2s, box-shadow .2s',
-            boxShadow: `0 0 30px ${m.shadow}`,
-          }}
-          onClick={m.action}
-          onMouseEnter={e=>{ e.currentTarget.style.transform='translateY(-3px)'; e.currentTarget.style.boxShadow=`0 12px 40px ${m.shadow}` }}
-          onMouseLeave={e=>{ e.currentTarget.style.transform=''; e.currentTarget.style.boxShadow=`0 0 30px ${m.shadow}` }}>
-            <div style={{ fontSize:17, fontWeight:700, marginBottom:10, letterSpacing:'-0.3px' }}>
-              {m.label}
-            </div>
-            <div style={{ fontSize:14, color:'var(--text2)', lineHeight:1.7, marginBottom:20, minHeight:72 }}>
-              {m.desc}
-            </div>
-            <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:20 }}>
-              {m.badges.map(b => (
-                <span key={b.label} className={`pill ${b.cls}`} style={{ fontSize:10 }}>{b.label}</span>
-              ))}
-            </div>
-            <button className={`btn ${m.key==='solo'?'btn-primary':'btn-cyan'}`}
-                    style={{ fontSize:13, padding:'8px 20px' }}>
-              {m.cta}
-            </button>
-          </div>
-        ))}
+      {/* Level path preview */}
+      <div style={{ marginBottom:56 }}>
+        <div style={{ fontSize:11, color:'var(--text2)', fontFamily:'JetBrains Mono',
+          letterSpacing:'0.5px', marginBottom:16 }}>PROGRESSION PATH</div>
+        <div style={{ display:'flex', alignItems:'center', overflowX:'auto', paddingBottom:8, gap:0 }}>
+          {Object.entries(LEVELS).map(([l, lvl], i) => {
+            const done = (player?.levels_completed||[]).includes(l)
+            const cur  = String(player?.level||1) === l && !done
+            return (
+              <React.Fragment key={l}>
+                <div style={{ display:'flex', flexDirection:'column', alignItems:'center',
+                  gap:6, minWidth:72, cursor: connected ? 'pointer' : 'default' }}
+                  onClick={() => connected && setView('solo')}>
+                  <LevelIcon level={parseInt(l)} size={40}
+                    done={done} active={cur}
+                    locked={!done && parseInt(l) > (player?.level||1)} />
+                  <span style={{ fontSize:10, fontFamily:'JetBrains Mono', textAlign:'center',
+                    color: done ? lvl.color : cur ? lvl.color : 'var(--text2)',
+                    whiteSpace:'nowrap' }}>{lvl.name}</span>
+                </div>
+                {i < 7 && (
+                  <div style={{ flex:1, height:1, minWidth:16, marginBottom:22,
+                    background: done ? `linear-gradient(90deg,${lvl.color},${LEVELS[String(i+2)]?.color||lvl.color})`
+                      : 'rgba(255,255,255,0.07)' }}/>
+                )}
+              </React.Fragment>
+            )
+          })}
+        </div>
       </div>
 
-      {/* Stats row */}
+      {/* Bottom stats */}
       <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:10, maxWidth:640, margin:'0 auto' }}>
-        {[['5','Levels'],['5','Questions / Level'],['AI','Always Fresh'],['On-chain','All Progress']].map(([v,l]) => (
+        {[
+          ['8', 'Levels'],
+          ['5', 'Questions / Level'],
+          ['AI', 'Always Fresh'],
+          ['On-chain', 'All Progress'],
+        ].map(([v,l]) => (
           <div key={l} className="stat-chip">
-            <div style={{ fontSize:22, fontWeight:800, fontFamily:'JetBrains Mono',
+            <div style={{ fontSize:20, fontWeight:800, fontFamily:'JetBrains Mono',
               background:'linear-gradient(135deg,#fff,var(--indigo))',
               WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent' }}>{v}</div>
             <div style={{ fontSize:11, color:'var(--text2)', textAlign:'center', lineHeight:1.4 }}>{l}</div>
@@ -304,7 +365,6 @@ export default function App() {
       <main className="main">
         {view==='home'        && <Home {...sharedProps} setView={setView} onConnect={connectWallet} />}
         {view==='solo'        && <SoloMode {...sharedProps} setView={setView} />}
-        {view==='hunt'        && <HuntMode {...sharedProps} setView={setView} />}
         {view==='profile'     && <Profile {...sharedProps} setView={setView} />}
         {view==='leaderboard' && <Leaderboard {...sharedProps} />}
       </main>
@@ -321,7 +381,7 @@ export default function App() {
               Choose your callsign
             </div>
             <div style={{ fontSize:14, color:'var(--text2)', marginBottom:20, lineHeight:1.6 }}>
-              Stored on-chain. Appears on leaderboards and Hunt results.
+              Stored on-chain. Appears on leaderboards.
             </div>
             <input className="input" placeholder="e.g. CryptoHunter" value={usernameInput}
                    onChange={e => setUsernameInput(e.target.value)}
