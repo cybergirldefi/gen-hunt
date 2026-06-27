@@ -7,7 +7,7 @@ export const NET = {
   nativeCurrency: { name:'GEN', symbol:'GEN', decimals:18 },
   blockExplorerUrls: ['https://explorer-bradbury.genlayer.com'],
 }
-const RPC  = 'https://rpc-bradbury.genlayer.com'
+const RPC  = '/api/rpc'
 const CONS = '0x0112Bf6e83497965A5fdD6Dad1E447a6E004271D'
 
 // ── GL Encoding ───────────────────────────────────────────────────────────
