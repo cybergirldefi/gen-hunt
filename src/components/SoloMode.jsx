@@ -39,7 +39,7 @@ export default function SoloMode({ account, connected, player, notify, loadPlaye
     setResult(null)
     setTxBusy(true)
     try {
-      const hash = await writeContract(CONTRACT_ADDR, account, 'request_question', [String(level)])
+      const hash = await writeContract(CONTRACT_ADDR, account, 'request_question', [String(level)], 0n, true)
       notify('AI generating your question...', 'inf')
       await waitTx(hash, () => notify('Taking a moment...', 'inf'))
 
