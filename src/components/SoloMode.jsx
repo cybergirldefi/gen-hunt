@@ -39,35 +39,35 @@ export default function SoloMode({ account, connected, player, notify, loadPlaye
     setResult(null)
     setTxBusy(true)
     try {
-      const hash = await writeContract(CONTRACT_ADDR, account, 'request_question', [String(level)], 0n, true)
-      notify('AI generating your question...', 'inf')
-      await waitTx(hash, () => notify('Taking a moment...', 'inf'))
+      // Read q_count BEFORE tx — gives us the exact question ID
+      const beforeQ = await readContract(CONTRACT_ADDR, 'get_total_players', [])
+      const newQId  = `q${parseInt(beforeQ || '0')}`
 
-      // Re-read player to get new q_count (q_id = "q" + (q_count-1))
-      // We poll get_question with sequential IDs until we find the new one
-      // Simpler: read player's latest question from contract state
-      // Actually we need the q_id — read from contract by checking q_count
-      await new Promise(r => setTimeout(r, 2000))
+      // Send transaction (no need to await status — we poll the question directly)
+      await writeContract(CONTRACT_ADDR, account, 'request_question', [String(level)], 0n, true)
+      notify('AI is generating your question...', 'inf')
 
-      // Find the latest question for this player/level by trying recent IDs
-      const totalQ = await readContract(CONTRACT_ADDR, 'get_total_players', [])
-      const qCount = parseInt(totalQ || '0')
-      // The newest question ID is q(qCount-1)
-      let found = false
-      for (let i = qCount-1; i >= Math.max(0, qCount-10); i--) {
-        const raw = await readContract(CONTRACT_ADDR, 'get_question', [`q${i}`])
-        if (raw && raw !== 'NOT_FOUND') {
-          const q = JSON.parse(raw)
-          if (q.level === String(level)) {
-            setQuestion(q)
-            setQId(`q${i}`)
-            setPhase('question')
-            found = true
+      // Poll get_question until it exists — this IS the confirmation signal
+      // The moment the tx is accepted the question appears in contract state
+      let q = null
+      const maxAttempts = 120  // 6 minutes max
+      for (let i = 0; i < maxAttempts; i++) {
+        await new Promise(r => setTimeout(r, 3000))
+        try {
+          const raw = await readContract(CONTRACT_ADDR, 'get_question', [newQId])
+          if (raw && raw !== 'NOT_FOUND') {
+            q = JSON.parse(raw)
             break
           }
-        }
+        } catch(e) { /* keep polling */ }
+        if (i === 10) notify('Still thinking — AI is working on it...', 'inf')
+        if (i === 20) notify('Almost there — nearly done...', 'inf')
       }
-      if (!found) throw new Error('Question generated but could not be read — try again')
+
+      if (!q) throw new Error('Timed out — check your wallet for tx status')
+      setQuestion(q)
+      setQId(newQId)
+      setPhase('question')
     } catch(e) {
       notify(e.message || 'Failed to generate question', 'err')
       setPhase('levels')
