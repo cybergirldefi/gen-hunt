@@ -164,9 +164,9 @@ export async function readContract(addr, method, args=[], useCache=false) {
 }
 
 // ── Write ─────────────────────────────────────────────────────────────────
-export async function writeContract(addr, account, method, args=[], valueWei=0n) {
+export async function writeContract(addr, account, method, args=[], valueWei=0n, leaderOnly=true) {
   await switchToBradbury()
-  const cd  = encodeCalldataMsgpack(method, args, false)
+  const cd  = encodeCalldataMsgpack(method, args, leaderOnly)
   const hex = cd.startsWith('0x') ? cd.slice(2) : cd
   const pad  = v => v.toString(16).padStart(64,'0')
   const padA = a => a.toLowerCase().replace('0x','').padStart(64,'0')
@@ -182,10 +182,10 @@ export async function writeContract(addr, account, method, args=[], valueWei=0n)
 }
 
 // ── Wait for tx ───────────────────────────────────────────────────────────
-export async function waitTx(hash, onSlow, tries=40) {
+export async function waitTx(hash, onSlow, tries=80) {
   for (let i=0; i<tries; i++) {
     await new Promise(r=>setTimeout(r,3000))
-    if (i===8 && onSlow) onSlow()
+    if (i===10 && onSlow) onSlow()
     try {
       const res = await fetch(RPC,{method:'POST',mode:'cors',credentials:'omit',
         headers:{'Content-Type':'application/json'},

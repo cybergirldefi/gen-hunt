@@ -229,7 +229,7 @@ export default function HuntMode({ account, connected, player, notify, loadPlaye
                   if (!player?.username) { notify('Set a username first', 'err'); return }
                   setTxBusy(true)
                   try {
-                    const hash = await writeContract(CONTRACT_ADDR, account, 'create_hunt', [roomName.trim(), topicLvl])
+                    const hash = await writeContract(CONTRACT_ADDR, account, 'create_hunt', [roomName.trim(), topicLvl], 0n, true)
                     notify('AI generating 10 questions...', 'inf')
                     await waitTx(hash, () => notify('This may take a moment...', 'inf'))
                     // Get room ID (latest)
