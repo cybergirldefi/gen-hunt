@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { readContract, writeContract, waitTx, switchToBradbury } from './lib/gl.js'
+import { readContract, writeContract, waitTx, switchToBradbury, clearReadCache, CHAIN_ID } from './lib/gl.js'
 import { CONTRACT_ADDR, sh, LEVELS, LEVEL_XP_THRESHOLD } from './lib/config.js'
 import SoloMode    from './components/SoloMode.jsx'
 import Profile     from './components/Profile.jsx'
@@ -322,24 +322,34 @@ export default function App() {
       if (raw && raw !== 'NOT_FOUND') {
         const p = JSON.parse(raw)
         setPlayer(p)
-        window._ghAccount = addr
         if (!p.username) setShowUsernameModal(true)
       }
-    } catch(e) { console.error('loadPlayer:', e) }
+    } catch(e) {
+      setPlayer(null)
+      notify(e.message || 'Could not load player', 'err')
+    }
   }, [])
 
   const connectWallet = async () => {
     if (!window.ethereum) { notify('Install MetaMask or Rabby', 'err'); return }
     try {
       const accs = await window.ethereum.request({ method:'eth_requestAccounts' })
-      await switchToBradbury()
-      setAccount(accs[0]); setConnected(true); window._ghAccount = accs[0]
+      await switchToBradbury(accs[0])
+      clearReadCache()
+      setAccount(accs[0])
+      setConnected(true)
       await loadPlayer(accs[0])
     } catch(e) { notify(e.message || 'Connection failed', 'err') }
   }
 
   const disconnect = () => {
-    setAccount(''); setConnected(false); setPlayer(null); setView('home')
+    clearReadCache()
+    setAccount('')
+    setConnected(false)
+    setPlayer(null)
+    setView('home')
+    setShowUsernameModal(false)
+    setUsernameInput('')
   }
 
   const saveUsername = async () => {
@@ -348,24 +358,92 @@ export default function App() {
     try {
       const hash = await writeContract(CONTRACT_ADDR, account, 'set_username', [usernameInput.trim()], 0n, true)
       notify('Saving callsign...', 'inf')
-      await waitTx(hash, () => notify('Finalising...', 'inf'))
+      await waitTx(
+        hash,
+        () => notify(
+          'Transaction is still reaching consensus...',
+          'inf',
+        ),
+      )
+
+      clearReadCache()
+
+      await loadPlayer(account)
+
       notify('Callsign saved', 'ok')
       setShowUsernameModal(false)
-      await loadPlayer(account)
     } catch(e) { notify(e.message, 'err') } finally { setTxBusy(false) }
   }
 
   useEffect(() => {
-    if (window.ethereum) {
-      window.ethereum.request({ method:'eth_accounts' }).then(accs => {
-        if (accs?.[0]) { setAccount(accs[0]); setConnected(true); window._ghAccount = accs[0]; loadPlayer(accs[0]) }
-      }).catch(()=>{})
-      window.ethereum.on('accountsChanged', accs => {
-        if (!accs.length) disconnect()
-        else { setAccount(accs[0]); window._ghAccount = accs[0]; loadPlayer(accs[0]) }
-      })
+    if (!window.ethereum) return
+
+    const handleAccountsChanged = async (accs) => {
+      clearReadCache()
+
+      if (!accs?.length) {
+        disconnect()
+        return
+      }
+
+      const next = accs[0]
+
+      setAccount(next)
+      setConnected(true)
+      setPlayer(null)
+
+      await loadPlayer(next)
     }
-  }, [])
+
+    const handleChainChanged = async (chainId) => {
+      clearReadCache()
+
+      if (
+        String(chainId).toLowerCase() !==
+        CHAIN_ID.toLowerCase()
+      ) {
+        setPlayer(null)
+
+        notify(
+          'Wallet switched away from GenLayer Bradbury',
+          'err',
+        )
+
+        return
+      }
+
+      if (account) {
+        await loadPlayer(account)
+      }
+    }
+
+    window.ethereum
+      .request({ method:'eth_accounts' })
+      .then(handleAccountsChanged)
+      .catch(() => {})
+
+    window.ethereum.on(
+      'accountsChanged',
+      handleAccountsChanged,
+    )
+
+    window.ethereum.on(
+      'chainChanged',
+      handleChainChanged,
+    )
+
+    return () => {
+      window.ethereum.removeListener?.(
+        'accountsChanged',
+        handleAccountsChanged,
+      )
+
+      window.ethereum.removeListener?.(
+        'chainChanged',
+        handleChainChanged,
+      )
+    }
+  }, [loadPlayer])
 
   const sharedProps = { account, connected, player, notify, loadPlayer, txBusy, setTxBusy }
 

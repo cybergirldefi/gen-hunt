@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { readContract, writeContract } from '../lib/gl.js'
+import { readContract, writeContract, waitTx, clearReadCache } from '../lib/gl.js'
 import { CONTRACT_ADDR, LEVELS } from '../lib/config.js'
 import { LevelIcon, ScoreRing } from '../App.jsx'
 import Mascot from './Mascot.jsx'
@@ -9,6 +9,89 @@ const LEVEL_TOPICS = {
   '4':'Smart Contract Vulns', '5':'Advanced Exploits', '6':'Zero-day & Side-channels',
   '7':'Social Engineering & OSINT', '8':'Nation-state & APT Attacks',
 }
+
+function parseContractValue(value) {
+  if (value === null || value === undefined) return null
+
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value)
+    } catch {
+      return value
+    }
+  }
+
+  return value
+}
+
+function progressKey(account, level) {
+  return `genhunt:quiz:${String(account).toLowerCase()}:${level}`
+}
+
+function saveQuizProgress(account, level, data) {
+  if (!account || !level) return
+
+  try {
+    localStorage.setItem(
+      progressKey(account, level),
+      JSON.stringify(data),
+    )
+  } catch {}
+}
+
+function loadQuizProgress(account, level) {
+  if (!account || !level) return null
+
+  try {
+    const raw = localStorage.getItem(
+      progressKey(account, level),
+    )
+
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
+function clearQuizProgress(account, level) {
+  if (!account || !level) return
+
+  try {
+    localStorage.removeItem(
+      progressKey(account, level),
+    )
+  } catch {}
+}
+
+
+async function loadQuestionsByIds(ids) {
+  return Promise.all(
+    ids.map(async qid => {
+      const raw = await readContract(
+        CONTRACT_ADDR,
+        'get_question',
+        [qid],
+      )
+
+      if (!raw || raw === 'NOT_FOUND') {
+        throw new Error(
+          `Question ${qid} could not be loaded`
+        )
+      }
+
+      const parsed = parseContractValue(raw)
+
+      if (!parsed || typeof parsed !== 'object') {
+        throw new Error(
+          `Invalid question ${qid}`
+        )
+      }
+
+      return parsed
+    }),
+  )
+}
+
 
 async function pollUntil(fn, intervalMs=3000, maxMs=360000) {
   const start = Date.now()
@@ -29,6 +112,10 @@ export default function SoloMode({ account, connected, player, notify, loadPlaye
   const [currentQ,    setCurrentQ]    = useState(0)
   const [results,     setResults]     = useState(null)
   const [genMsg,      setGenMsg]      = useState('AI is writing your quiz...')
+  const [resumeChecking, setResumeChecking] = useState(true)
+  const [activeQuizLevel, setActiveQuizLevel] = useState(null)
+  const [practiceMode, setPracticeMode] = useState(false)
+  const [openingLevel, setOpeningLevel] = useState(null)
 
   if (!connected) return (
     <div style={{ textAlign:'center', padding:'80px 0' }}>
@@ -42,135 +129,539 @@ export default function SoloMode({ account, connected, player, notify, loadPlaye
   const currentLevel = player?.level || 1
   const completed    = player?.levels_completed || []
 
-  // Resume on refresh
-  useEffect(() => {
-    if (!connected || !account || !CONTRACT_ADDR) return
-    const checkResume = async () => {
-      for (const l of Object.keys(LEVELS)) {
-        try {
-          const raw = await readContract(CONTRACT_ADDR, 'get_quiz_status', [account, l])
-          if (!raw || raw === 'NOT_FOUND') continue
-          const status = JSON.parse(raw)
-          if (status.status === 'IN_PROGRESS' && status.q_ids?.length > 0) {
-            const qs = []
-            for (const qid of status.q_ids) {
-              const qraw = await readContract(CONTRACT_ADDR, 'get_question', [qid])
-              if (qraw && qraw !== 'NOT_FOUND') qs.push(JSON.parse(qraw))
-            }
-            if (qs.length === status.q_ids.length) {
-              const answeredCount = Object.keys(status.answers || {}).length
-              setActiveLevel(parseInt(l))
-              setQIds(status.q_ids)
-              setQuestions(qs)
-              setAnswers(status.answers || {})
-              setCurrentQ(answeredCount < qs.length ? answeredCount : 0)
-              setPhase('quiz')
-              notify(`Resumed Level ${l} — Q${answeredCount + 1}/5`, 'inf')
-              return
-            }
-          }
-        } catch(e) {}
-      }
+  const restoreActiveQuiz = async (level) => {
+    const levelString = String(level)
+
+    const rawStatus = await readContract(
+      CONTRACT_ADDR,
+      'get_quiz_status',
+      [account, levelString],
+    )
+
+    const status = parseContractValue(rawStatus)
+
+    if (
+      !status ||
+      status === 'NOT_FOUND' ||
+      status.status !== 'IN_PROGRESS' ||
+      !Array.isArray(status.q_ids) ||
+      status.q_ids.length !== 5
+    ) {
+      return false
     }
+
+    const qs = await loadQuestionsByIds(
+      status.q_ids,
+    )
+
+    const saved = loadQuizProgress(
+      account,
+      levelString,
+    )
+
+    const sameQuiz =
+      saved &&
+      Array.isArray(saved.qIds) &&
+      JSON.stringify(saved.qIds) ===
+        JSON.stringify(status.q_ids)
+
+    const restoredAnswers =
+      sameQuiz && saved.answers
+        ? saved.answers
+        : {}
+
+    let restoredQuestion =
+      sameQuiz &&
+      Number.isInteger(saved.currentQ)
+        ? saved.currentQ
+        : Object.keys(restoredAnswers).length
+
+    restoredQuestion = Math.max(
+      0,
+      Math.min(
+        restoredQuestion,
+        qs.length - 1,
+      ),
+    )
+
+    setPracticeMode(false)
+    setActiveLevel(parseInt(levelString))
+    setActiveQuizLevel(parseInt(levelString))
+    setQIds(status.q_ids)
+    setQuestions(qs)
+    setAnswers(restoredAnswers)
+    setCurrentQ(restoredQuestion)
+    setPhase('quiz')
+
+    notify(
+      Object.keys(restoredAnswers).length > 0
+        ? `Resumed Level ${levelString} at Question ${restoredQuestion + 1}`
+        : `Resumed active Level ${levelString} quiz`,
+      'inf',
+    )
+
+    return true
+  }
+
+
+  // Detect unfinished quizzes in the background.
+  // The level screen stays interactive immediately.
+  useEffect(() => {
+    if (!connected || !account || !CONTRACT_ADDR) {
+      setResumeChecking(false)
+      setActiveQuizLevel(null)
+      return
+    }
+
+    let cancelled = false
+
+    const checkResume = async () => {
+      /*
+       * Do not block level interaction while checking.
+       * All eight status reads run concurrently.
+       */
+      setResumeChecking(false)
+
+      const levels = Object.keys(LEVELS)
+
+      const checks = await Promise.all(
+        levels.map(async level => {
+          try {
+            const rawStatus = await readContract(
+              CONTRACT_ADDR,
+              'get_quiz_status',
+              [account, level],
+            )
+
+            const status = parseContractValue(rawStatus)
+
+            if (
+              status &&
+              status !== 'NOT_FOUND' &&
+              status.status === 'IN_PROGRESS' &&
+              Array.isArray(status.q_ids) &&
+              status.q_ids.length === 5
+            ) {
+              return parseInt(level)
+            }
+          } catch {}
+
+          return null
+        }),
+      )
+
+      if (cancelled) return
+
+      const active = checks.find(
+        level => level !== null
+      )
+
+      setActiveQuizLevel(active || null)
+    }
+
     checkResume()
+
+    return () => {
+      cancelled = true
+    }
   }, [connected, account])
 
-  const generateQuiz = async (level) => {
-    setPhase('generating')
-    setActiveLevel(level)
-    setAnswers({}); setCurrentQ(0); setResults(null)
-    setGenMsg('AI is writing your quiz...')
-    setTxBusy(true)
-    try {
-      const beforeQ  = await readContract(CONTRACT_ADDR, 'get_total_questions', [])
-      const baseN    = parseInt(beforeQ || '0')
-      const expected = Array.from({length:5}, (_,i) => `q${baseN+i}`)
 
-      await writeContract(CONTRACT_ADDR, account, 'request_level_quiz', [String(level)], 0n, true)
+  const generateQuiz = async (level) => {
+    if (resumeChecking) {
+      notify(
+        'Checking for an unfinished quiz...',
+        'inf',
+      )
+      return
+    }
+
+    setTxBusy(true)
+
+    let msgInterval
+
+    try {
+      /*
+       * Critical:
+       * Never request a new generation transaction when this
+       * wallet already has an active quiz for the level.
+       */
+      clearReadCache()
+
+      const restored =
+        await restoreActiveQuiz(level)
+
+      if (restored) {
+        setTxBusy(false)
+        return
+      }
+
+      setPracticeMode(false)
+      setPhase('generating')
+      setActiveLevel(level)
+      setAnswers({})
+      setCurrentQ(0)
+      setResults(null)
+      setGenMsg('AI is writing your quiz...')
+
+      /*
+       * Full consensus is required because the contract invokes
+       * prompt_non_comparative.
+       */
+      const hash = await writeContract(
+        CONTRACT_ADDR,
+        account,
+        'request_level_quiz',
+        [String(level)],
+        0n,
+        false,
+      )
+
       notify('Generating questions...', 'inf')
 
       let tick = 0
+
       const msgs = [
         'AI is writing your quiz...',
-        'Crafting tricky questions...',
-        'Picking the best traps...',
+        'Validators are reviewing the questions...',
+        'Checking answer quality...',
         'Almost there...',
       ]
-      const msgInterval = setInterval(() => {
+
+      msgInterval = setInterval(() => {
         tick = (tick + 1) % msgs.length
         setGenMsg(msgs[tick])
       }, 5000)
 
-      const firstQ = await pollUntil(async () => {
-        const raw = await readContract(CONTRACT_ADDR, 'get_question', [expected[0]])
-        return (raw && raw !== 'NOT_FOUND') ? raw : null
-      }, 3000, 360000)
+      await waitTx(
+        hash,
+        () => notify(
+          'GenLayer validators are still reaching consensus...',
+          'inf',
+        ),
+      )
 
-      clearInterval(msgInterval)
+      clearReadCache()
 
-      const qs = [JSON.parse(firstQ)]
-      for (let i = 1; i < 5; i++) {
-        const raw = await readContract(CONTRACT_ADDR, 'get_question', [expected[i]])
-        if (raw && raw !== 'NOT_FOUND') qs.push(JSON.parse(raw))
+      /*
+       * Only now do we know a genuinely new quiz was accepted.
+       * Safe to discard local progress from an older quiz.
+       */
+      clearQuizProgress(
+        account,
+        String(level),
+      )
+
+      const rawStatus = await pollUntil(async () => {
+        const raw = await readContract(
+          CONTRACT_ADDR,
+          'get_quiz_status',
+          [account, String(level)],
+        )
+
+        const parsed = parseContractValue(raw)
+
+        if (
+          parsed &&
+          parsed.status === 'IN_PROGRESS' &&
+          Array.isArray(parsed.q_ids) &&
+          parsed.q_ids.length === 5
+        ) {
+          return parsed
+        }
+
+        return null
+      })
+
+      const ids = rawStatus.q_ids
+      const qs = await loadQuestionsByIds(ids)
+
+      setActiveQuizLevel(parseInt(level))
+      setQIds(ids)
+      setQuestions(qs)
+      setAnswers({})
+      setCurrentQ(0)
+
+      saveQuizProgress(
+        account,
+        String(level),
+        {
+          qIds: ids,
+          answers: {},
+          currentQ: 0,
+        },
+      )
+
+      setPhase('quiz')
+
+      notify('Questions ready', 'ok')
+    } catch (error) {
+      /*
+       * Wallet rejection must NOT destroy an already existing
+       * on-chain/local quiz.
+       */
+      if (
+        error?.code === 4001 ||
+        /user rejected/i.test(error?.message || '')
+      ) {
+        notify('Transaction cancelled', 'inf')
+
+        clearReadCache()
+
+        try {
+          const restored =
+            await restoreActiveQuiz(level)
+
+          if (!restored) {
+            setPhase('levels')
+          }
+        } catch {
+          setPhase('levels')
+        }
+
+        return
       }
 
-      if (qs.length !== 5) throw new Error('Could not fetch all questions — try again')
-      setQIds(expected)
-      setQuestions(qs)
-      setPhase('quiz')
-      notify('Questions ready', 'ok')
-    } catch(e) {
-      notify(e.message || 'Failed to generate quiz', 'err')
-      setPhase('levels')
-    } finally { setTxBusy(false) }
+      notify(
+        error.message || 'Failed to generate quiz',
+        'err',
+      )
+
+      /*
+       * Before falling back to the level screen, check whether
+       * the transaction actually created/left an active quiz.
+       */
+      clearReadCache()
+
+      try {
+        const restored =
+          await restoreActiveQuiz(level)
+
+        if (!restored) {
+          setPhase('levels')
+        }
+      } catch {
+        setPhase('levels')
+      }
+    } finally {
+      if (msgInterval) {
+        clearInterval(msgInterval)
+      }
+
+      setTxBusy(false)
+    }
   }
+
 
   const selectAnswer = (answer) => {
     if (answers[currentQ] !== undefined) return
-    const newAnswers = { ...answers, [currentQ]: answer }
+
+    const newAnswers = {
+      ...answers,
+      [currentQ]: answer,
+    }
+
+    const nextQuestion =
+      currentQ < questions.length - 1
+        ? currentQ + 1
+        : currentQ
+
     setAnswers(newAnswers)
-    setTimeout(() => {
-      if (currentQ < questions.length - 1) setCurrentQ(q => q + 1)
-    }, 500)
+
+    if (!practiceMode) {
+      saveQuizProgress(
+        account,
+        String(activeLevel),
+        {
+          qIds,
+          answers: newAnswers,
+          currentQ: nextQuestion,
+        },
+      )
+    }
+
+    if (currentQ < questions.length - 1) {
+      setTimeout(() => {
+        setCurrentQ(nextQuestion)
+      }, 500)
+    }
   }
+
 
   const submitAnswers = async () => {
     if (Object.keys(answers).length < questions.length) {
-      notify('Answer all questions first', 'err'); return
+      notify('Answer all questions first', 'err')
+      return
     }
+
+    /*
+     * Practice Mode never writes to the contract.
+     * It reuses a previously completed on-chain quiz and scores
+     * the attempt locally with zero XP/progression effects.
+     */
+    if (practiceMode) {
+      const practiceResults = questions.map(
+        (question, index) => {
+          const userAnswer = answers[index]
+          const correctAnswer = String(
+            question.correct
+          ).toUpperCase()
+
+          return {
+            q_id: question.id || qIds[index],
+            question: question.question,
+            user_answer: userAnswer,
+            correct: correctAnswer,
+            is_correct:
+              userAnswer === correctAnswer,
+            explanation:
+              question.explanation || '',
+          }
+        },
+      )
+
+      const score = practiceResults.filter(
+        result => result.is_correct
+      ).length
+
+      const passScore =
+        LEVELS[String(activeLevel)]?.passScore || 4
+
+      setResults({
+        status: 'PRACTICE_COMPLETED',
+        q_ids: qIds,
+        score,
+        passed: score >= passScore,
+        xp_earned: 0,
+        results: practiceResults,
+      })
+
+      setPhase('results')
+      return
+    }
+
+    if (Object.keys(answers).length < questions.length) {
+      notify('Answer all questions first', 'err')
+      return
+    }
+
     setPhase('submitting')
     setTxBusy(true)
+
     try {
-      await writeContract(CONTRACT_ADDR, account, 'submit_quiz_answers',
-        [String(activeLevel), JSON.stringify(answers)], 0n, true)
+      const hash = await writeContract(
+        CONTRACT_ADDR,
+        account,
+        'submit_quiz_answers',
+        [
+          String(activeLevel),
+          JSON.stringify(answers),
+        ],
+        0n,
+        true,
+      )
+
       notify('Scoring your answers...', 'inf')
 
+      await waitTx(
+        hash,
+        () => notify('Finalising score...', 'inf'),
+      )
+
+      clearReadCache()
+
       const statusRaw = await pollUntil(async () => {
-        const raw = await readContract(CONTRACT_ADDR, 'get_quiz_status', [account, String(activeLevel)])
-        if (!raw || raw === 'NOT_FOUND') return null
-        const s = JSON.parse(raw)
-        return s.status === 'COMPLETED' ? s : null
-      }, 3000, 360000)
+        const raw = await readContract(
+          CONTRACT_ADDR,
+          'get_quiz_status',
+          [account, String(activeLevel)],
+        )
+
+        if (!raw) return null
+
+        const status =
+          typeof raw === 'string'
+            ? JSON.parse(raw)
+            : raw
+
+        return status.status === 'COMPLETED'
+          ? status
+          : null
+      })
 
       setResults(statusRaw)
+
+      clearQuizProgress(
+        account,
+        String(activeLevel),
+      )
+
+      setActiveQuizLevel(null)
+
       await loadPlayer(account)
+
       setPhase('results')
-    } catch(e) {
-      notify(e.message || 'Submit failed', 'err')
+    } catch (error) {
+      notify(
+        error.message || 'Submit failed',
+        'err',
+      )
+
       setPhase('quiz')
-    } finally { setTxBusy(false) }
+    } finally {
+      setTxBusy(false)
+    }
   }
+
 
   const retryQuiz = async () => {
     setTxBusy(true)
+
     try {
-      await writeContract(CONTRACT_ADDR, account, 'retry_quiz', [String(activeLevel)], 0n, true)
+      const hash = await writeContract(
+        CONTRACT_ADDR,
+        account,
+        'retry_quiz',
+        [String(activeLevel)],
+        0n,
+        true,
+      )
+
       notify('Resetting quiz...', 'inf')
-      await new Promise(r => setTimeout(r, 4000))
+
+      await waitTx(
+        hash,
+        () => notify('Finalising reset...', 'inf'),
+      )
+
+      clearReadCache()
+
+      clearQuizProgress(
+        account,
+        String(activeLevel),
+      )
+
+      setActiveQuizLevel(null)
+
       await loadPlayer(account)
-      setPhase('levels'); setQuestions([]); setAnswers({}); setResults(null)
-    } catch(e) { notify(e.message, 'err') } finally { setTxBusy(false) }
+
+      setPhase('levels')
+      setQuestions([])
+      setQIds([])
+      setAnswers({})
+      setResults(null)
+
+      notify('Ready for a new attempt', 'ok')
+    } catch (error) {
+      notify(
+        error.message || 'Retry failed',
+        'err',
+      )
+    } finally {
+      setTxBusy(false)
+    }
   }
+
 
   // ── Level select ──────────────────────────────────────────────────────────
   if (phase === 'levels') return (
@@ -186,18 +677,46 @@ export default function SoloMode({ account, connected, player, notify, loadPlaye
 
       <div style={{ display:'grid', gap:10 }}>
         {Object.entries(LEVELS).map(([l, lvl]) => {
-          const done   = completed.includes(l)
+          const done = completed.includes(l)
+          const hasActiveQuiz = activeQuizLevel === parseInt(l)
           const locked = parseInt(l) > currentLevel && !done
-          const isCurr = String(currentLevel) === l && !done
+          const isCurr =
+            String(currentLevel) === l &&
+            !done &&
+            !hasActiveQuiz
           return (
             <div key={l} className="card" style={{
               borderColor: locked ? 'rgba(255,255,255,0.04)' : `${lvl.color}20`,
               opacity: locked ? 0.35 : 1,
-              cursor: locked ? 'not-allowed' : 'pointer',
+              cursor:
+                locked
+                  ? 'not-allowed'
+                  : 'pointer',
               display:'flex', alignItems:'center', gap:14,
               padding:'16px 20px', transition:'all .2s',
             }}
-            onClick={() => !locked && !txBusy && generateQuiz(parseInt(l))}
+            onClick={async () => {
+              if (
+                locked ||
+                txBusy ||
+                openingLevel
+              ) return
+
+              const levelNumber = parseInt(l)
+
+              setOpeningLevel(levelNumber)
+
+              try {
+                if (done && !hasActiveQuiz) {
+                  await startPractice(levelNumber)
+                  return
+                }
+
+                await generateQuiz(levelNumber)
+              } finally {
+                setOpeningLevel(null)
+              }
+            }}
             onMouseEnter={e => { if(!locked) e.currentTarget.style.transform='translateX(4px)' }}
             onMouseLeave={e => { e.currentTarget.style.transform='' }}>
               <LevelIcon level={parseInt(l)} size={40}
@@ -207,7 +726,45 @@ export default function SoloMode({ account, connected, player, notify, loadPlaye
                   <span style={{ fontWeight:700, fontFamily:'JetBrains Mono', fontSize:14 }}>
                     Level {l} — {lvl.name}
                   </span>
-                  {done   && <span className="pill level-1" style={{ fontSize:9, padding:'2px 8px' }}>DONE</span>}
+                  {done && (
+                    <>
+                      <span
+                        className="pill level-1"
+                        style={{ fontSize:9, padding:'2px 8px' }}
+                      >
+                        DONE
+                      </span>
+
+                      <span
+                        className="pill"
+                        style={{
+                          fontSize:9,
+                          padding:'2px 8px',
+                          color:'var(--text2)',
+                          border:'1px solid rgba(255,255,255,0.08)',
+                          background:'rgba(255,255,255,0.03)',
+                        }}
+                      >
+                        PRACTICE
+                      </span>
+                    </>
+                  )}
+
+                  {hasActiveQuiz && (
+                    <span
+                      className="pill"
+                      style={{
+                        fontSize:9,
+                        padding:'2px 8px',
+                        background:'rgba(99,102,241,0.12)',
+                        border:'1px solid rgba(99,102,241,0.35)',
+                        color:'var(--indigo)',
+                      }}
+                    >
+                      CONTINUE
+                    </span>
+                  )}
+
                   {isCurr && <span className="pill" style={{ fontSize:9, padding:'2px 8px',
                     background:'rgba(99,102,241,0.1)', border:'1px solid rgba(99,102,241,0.2)',
                     color:'var(--indigo)' }}>CURRENT</span>}
@@ -215,9 +772,36 @@ export default function SoloMode({ account, connected, player, notify, loadPlaye
                 <div style={{ fontSize:12, color:'var(--text2)' }}>{LEVEL_TOPICS[l]}</div>
               </div>
               <div style={{ textAlign:'right', flexShrink:0 }}>
-                <div style={{ fontSize:13, fontFamily:'JetBrains Mono', fontWeight:700,
-                  color: lvl.color }}>+{lvl.xpReward * 5}</div>
-                <div style={{ fontSize:10, color:'var(--text2)' }}>XP max</div>
+                {openingLevel === parseInt(l) ? (
+                  <div style={{
+                    fontSize:11,
+                    fontFamily:'JetBrains Mono',
+                    color:lvl.color,
+                    display:'flex',
+                    gap:6,
+                    alignItems:'center',
+                  }}>
+                    <span className="spin-el"/>
+                    Opening...
+                  </div>
+                ) : (
+                  <>
+                    <div style={{
+                      fontSize:13,
+                      fontFamily:'JetBrains Mono',
+                      fontWeight:700,
+                      color:lvl.color,
+                    }}>
+                      +{lvl.xpReward * 5}
+                    </div>
+                    <div style={{
+                      fontSize:10,
+                      color:'var(--text2)',
+                    }}>
+                      XP max
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           )
@@ -264,12 +848,36 @@ export default function SoloMode({ account, connected, player, notify, loadPlaye
       <div style={{ maxWidth:640, margin:'0 auto' }}>
         <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20 }}>
           <button className="btn btn-ghost" style={{ padding:'6px 10px', fontSize:13 }}
-                  onClick={() => { setPhase('levels'); setQuestions([]); setAnswers({}) }}>
+                  onClick={() => {
+                    setPhase('levels')
+                    setQuestions([])
+                    setAnswers({})
+                    setPracticeMode(false)
+                  }}>
             Back
           </button>
-          <span className={`pill level-${Math.min(activeLevel,5)}`}>
-            Level {activeLevel} — {LEVELS[String(activeLevel)]?.name}
-          </span>
+          <div style={{
+            display:'flex',
+            alignItems:'center',
+            gap:8,
+          }}>
+            <span className={`pill level-${Math.min(activeLevel,5)}`}>
+              Level {activeLevel} — {LEVELS[String(activeLevel)]?.name}
+            </span>
+
+            {practiceMode && (
+              <span
+                className="pill"
+                style={{
+                  color:'#A5B4FC',
+                  background:'rgba(99,102,241,0.1)',
+                  border:'1px solid rgba(99,102,241,0.25)',
+                }}
+              >
+                PRACTICE
+              </span>
+            )}
+          </div>
           <span style={{ fontSize:12, color:'var(--text2)', fontFamily:'JetBrains Mono' }}>
             {Object.keys(answers).length}/5
           </span>
@@ -278,7 +886,18 @@ export default function SoloMode({ account, connected, player, notify, loadPlaye
         {/* Question number dots */}
         <div style={{ display:'flex', gap:6, marginBottom:24, justifyContent:'center' }}>
           {questions.map((_,i) => (
-            <div key={i} onClick={() => setCurrentQ(i)} style={{
+            <div key={i} onClick={() => {
+              setCurrentQ(i)
+              saveQuizProgress(
+                account,
+                String(activeLevel),
+                {
+                  qIds,
+                  answers,
+                  currentQ: i,
+                },
+              )
+            }} style={{
               width:34, height:34, borderRadius:8, cursor:'pointer',
               display:'flex', alignItems:'center', justifyContent:'center',
               fontSize:12, fontFamily:'JetBrains Mono', fontWeight:700,
@@ -331,7 +950,11 @@ export default function SoloMode({ account, connected, player, notify, loadPlaye
           {allAnswered && (
             <button className="btn btn-primary" disabled={txBusy} onClick={submitAnswers}
                     style={{ padding:'10px 28px' }}>
-              {txBusy ? <><span className="spin-el"/>Submitting...</> : 'Submit Answers'}
+              {practiceMode
+                ? 'Check Answers'
+                : txBusy
+                  ? <><span className="spin-el"/>Submitting...</>
+                  : 'Submit Answers'}
             </button>
           )}
         </div>
@@ -368,11 +991,26 @@ export default function SoloMode({ account, connected, player, notify, loadPlaye
           <div style={{ fontFamily:'JetBrains Mono', fontSize:22, fontWeight:800,
             marginTop:12, marginBottom:4,
             color: passed ? 'var(--green)' : 'var(--amber)' }}>
-            {passed ? `Level ${activeLevel} cleared` : `Need ${lvl?.passScore || 4}/5 to pass`}
+            {practiceMode
+              ? `Practice score: ${score}/${total}`
+              : passed
+                ? `Level ${activeLevel} cleared`
+                : `Need ${lvl?.passScore || 4}/5 to pass`}
           </div>
           {xpEarned > 0 && (
             <div style={{ fontSize:17, color:'#A5B4FC', fontFamily:'JetBrains Mono',
               fontWeight:700 }}>+{xpEarned} XP</div>
+          )}
+
+          {practiceMode && (
+            <div style={{
+              fontSize:12,
+              color:'var(--text2)',
+              fontFamily:'JetBrains Mono',
+              marginTop:6,
+            }}>
+              PRACTICE · 0 XP · progression unchanged
+            </div>
           )}
         </div>
 
@@ -420,17 +1058,43 @@ export default function SoloMode({ account, connected, player, notify, loadPlaye
         </div>
 
         <div style={{ display:'flex', gap:10, justifyContent:'center', flexWrap:'wrap' }}>
-          {passed && parseInt(activeLevel) < 8 && (
+          {!practiceMode && passed && parseInt(activeLevel) < 8 && (
             <button className="btn btn-primary"
-                    onClick={() => { setPhase('levels'); setQuestions([]); setAnswers({}); setResults(null) }}>
+                    onClick={() => {
+                    setPhase('levels')
+                    setQuestions([])
+                    setAnswers({})
+                    setResults(null)
+                    setPracticeMode(false)
+                  }}>
               Next Level
             </button>
           )}
-          <button className="btn btn-outline" disabled={txBusy} onClick={retryQuiz}>
-            {txBusy ? <><span className="spin-el"/>...</> : 'Retry'}
+          <button
+            className="btn btn-outline"
+            disabled={txBusy}
+            onClick={() => {
+              if (practiceMode) {
+                startPractice(activeLevel)
+              } else {
+                retryQuiz()
+              }
+            }}
+          >
+            {txBusy
+              ? <><span className="spin-el"/>...</>
+              : practiceMode
+                ? 'Practice Again'
+                : 'Retry'}
           </button>
           <button className="btn btn-ghost"
-                  onClick={() => { setPhase('levels'); setQuestions([]); setAnswers({}); setResults(null) }}>
+                  onClick={() => {
+                    setPhase('levels')
+                    setQuestions([])
+                    setAnswers({})
+                    setResults(null)
+                    setPracticeMode(false)
+                  }}>
             All Levels
           </button>
         </div>

@@ -46,7 +46,7 @@ Every question is generated live by the AI at quiz time — no static question b
 |---|---|
 | **Network** | GenLayer Bradbury Testnet |
 | **Chain ID** | 4221 |
-| **Contract** | `0x7C3396749E59BE3cC246a8e157a7bed29BE155E1` |
+| **Contract** | `0xBD5094941E56fb0029B47c9A75D6aF24305D49f6` |
 | **Explorer** | [View on Explorer](https://explorer-bradbury.genlayer.com/address/0x7C3396749E59BE3cCC246a8e157a7bed29BE155E1) |
 | **RPC** | `https://rpc-bradbury.genlayer.com` |
 
