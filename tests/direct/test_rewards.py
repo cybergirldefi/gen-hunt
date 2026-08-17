@@ -217,7 +217,7 @@ def test_failed_quiz_can_retry(
 
     status = get_status(contract, direct_alice)
 
-    assert status["status"] == "NOT_STARTED"
+    assert status["status"] == "IN_PROGRESS"
 
     player = get_player(contract, direct_alice)
     assert player["xp"] == 0

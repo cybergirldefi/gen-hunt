@@ -51,6 +51,38 @@ LEVEL_NAMES = {
 }
 
 
+# Advanced training must be grounded in contract-controlled,
+# authoritative cybersecurity sources.
+#
+# Users cannot supply or replace these URLs.
+ADVANCED_LEVEL_SOURCES = {
+    "3": {
+        "name": "OWASP Smart Contract Security",
+        "url": "https://scs.owasp.org/",
+    },
+    "4": {
+        "name": "OWASP Smart Contract Security",
+        "url": "https://scs.owasp.org/",
+    },
+    "5": {
+        "name": "OWASP Smart Contract Security",
+        "url": "https://scs.owasp.org/",
+    },
+    "6": {
+        "name": "NIST Cybersecurity Publications",
+        "url": "https://csrc.nist.gov/publications",
+    },
+    "7": {
+        "name": "MITRE ATT&CK - Phishing",
+        "url": "https://attack.mitre.org/techniques/T1566/",
+    },
+    "8": {
+        "name": "MITRE ATT&CK - Groups",
+        "url": "https://attack.mitre.org/groups/",
+    },
+}
+
+
 class GenHunt(gl.Contract):
 
     players: TreeMap[str, str]
@@ -313,6 +345,9 @@ class GenHunt(gl.Contract):
             "results": quiz.get("results", []),
             "xp_earned": quiz.get("xp_earned", 0),
             "passed": quiz.get("passed", False),
+            "grounded": quiz.get("grounded", False),
+            "source_name": quiz.get("source_name", ""),
+            "source_url": quiz.get("source_url", ""),
         })
 
     @gl.public.view
@@ -355,13 +390,23 @@ class GenHunt(gl.Contract):
 
         if quiz_key in player:
             existing = player[quiz_key]
-            status = existing.get("status", "NOT_STARTED")
+            status = existing.get(
+                "status",
+                "NOT_STARTED",
+            )
 
             if status == "IN_PROGRESS":
-                raise gl.vm.UserError("Quiz already in progress")
+                raise gl.vm.UserError(
+                    "Quiz already in progress"
+                )
 
-            if status == "COMPLETED" and existing.get("passed", False):
-                raise gl.vm.UserError("Level already completed")
+            if (
+                status == "COMPLETED"
+                and existing.get("passed", False)
+            ):
+                raise gl.vm.UserError(
+                    "Level already completed"
+                )
 
             if status == "COMPLETED":
                 raise gl.vm.UserError(
@@ -372,16 +417,40 @@ class GenHunt(gl.Contract):
         level_name = LEVEL_NAMES[level]
         now_str = gl.message_raw["datetime"]
 
+        source = ADVANCED_LEVEL_SOURCES.get(
+            level,
+            None,
+        )
+
+        grounded = source is not None
+
+        source_name = (
+            source["name"]
+            if grounded
+            else ""
+        )
+
+        source_url = (
+            source["url"]
+            if grounded
+            else ""
+        )
+
         base_n = int(self.q_count)
+
         q_ids = [
             "q" + str(base_n + i)
-            for i in range(QUESTIONS_PER_LEVEL)
+            for i in range(
+                QUESTIONS_PER_LEVEL
+            )
         ]
 
-        self.q_count = u64(base_n + QUESTIONS_PER_LEVEL)
+        self.q_count = u64(
+            base_n + QUESTIONS_PER_LEVEL
+        )
 
-        def quiz_context() -> str:
-            return (
+        def quiz_input() -> str:
+            base_context = (
                 "LEVEL: "
                 + level
                 + "\nLEVEL_NAME: "
@@ -393,69 +462,196 @@ class GenHunt(gl.Contract):
                 + "\nQUESTION_COUNT: 5"
             )
 
-        raw_result = gl.eq_principle.prompt_non_comparative(
-            quiz_context,
-            task=(
+            # Levels 1-2 use general cybersecurity
+            # knowledge and do not require web grounding.
+            if not grounded:
+                return (
+                    base_context
+                    + "\nGROUNDING_MODE: GENERAL"
+                )
+
+            # Levels 3-8 must use a fixed,
+            # authoritative external source.
+            response = gl.nondet.web.get(
+                source_url
+            )
+
+            status_code = response.status
+
+            if (
+                status_code < 200
+                or status_code >= 300
+            ):
+                raise gl.vm.UserError(
+                    "Authoritative source unavailable"
+                )
+
+            if response.body is None:
+                raise gl.vm.UserError(
+                    "Authoritative source returned no content"
+                )
+
+            source_text = (
+                response.body
+                .decode(
+                    "utf-8",
+                    errors="ignore",
+                )
+                .strip()
+            )
+
+            if len(source_text) < 100:
+                raise gl.vm.UserError(
+                    "Authoritative source content insufficient"
+                )
+
+            # Keep consensus prompts bounded while
+            # preserving enough source material for
+            # substantive question generation.
+            source_text = source_text[:30000]
+
+            return (
+                base_context
+                + "\nGROUNDING_MODE: AUTHORITATIVE_SOURCE"
+                + "\nSOURCE_NAME: "
+                + source_name
+                + "\nSOURCE_URL: "
+                + source_url
+                + "\n\nSOURCE_CONTENT:\n"
+                + source_text
+            )
+
+        if grounded:
+            task = (
                 "Create exactly five multiple-choice cybersecurity "
-                "training questions for a Web3 learner.\n\n"
-                "The LEVEL, LEVEL_NAME and TOPIC in the supplied context "
-                "define the required subject matter and difficulty.\n\n"
+                "training questions for a Web3 learner using ONLY "
+                "the authoritative SOURCE_CONTENT supplied in the input.\n\n"
+
+                "The LEVEL, LEVEL_NAME and TOPIC define the intended "
+                "subject area and difficulty.\n\n"
+
+                "Every factual claim, correct answer and explanation "
+                "must be supported by SOURCE_CONTENT. "
+                "Do not use facts that come only from your model memory "
+                "or outside knowledge.\n\n"
+
                 "Return ONLY a valid JSON array containing exactly "
                 "five objects using this structure:\n"
+
                 '[{"question":"...",'
                 '"options":{"A":"...","B":"...","C":"...","D":"..."},'
                 '"correct":"A",'
                 '"explanation":"..."}, ...]\n\n'
+
                 "Rules:\n"
-                "- Every question must test cybersecurity knowledge relevant "
-                "to the supplied TOPIC.\n"
-                "- Difficulty must be appropriate for the supplied LEVEL.\n"
+                "- Exactly five materially different questions.\n"
+                "- Every question must be relevant to TOPIC.\n"
+                "- Difficulty must match LEVEL and LEVEL_NAME.\n"
+                "- Exactly four options: A, B, C and D.\n"
+                "- Exactly one option must be factually correct.\n"
+                "- Correct answers must be directly supported by SOURCE_CONTENT.\n"
+                "- Explanations must be directly supported by SOURCE_CONTENT.\n"
+                "- Distractors must be plausible but wrong according to the source.\n"
+                "- Do not introduce security claims absent from SOURCE_CONTENT.\n"
+                "- Do not use markdown or commentary outside the JSON array."
+            )
+
+            criteria = (
+                "Judge the proposed quiz strictly against the supplied "
+                "SOURCE_CONTENT, LEVEL, LEVEL_NAME and TOPIC.\n\n"
+
+                "Accept ONLY if ALL conditions are satisfied:\n"
+
+                "1. Output is a valid JSON array of exactly five questions.\n"
+
+                "2. Every question contains a question string, options A-D, "
+                "one correct option and an explanation.\n"
+
+                "3. Every question is materially relevant to TOPIC.\n"
+
+                "4. Difficulty is appropriate for LEVEL and LEVEL_NAME.\n"
+
+                "5. The five questions are materially different and do not "
+                "repeat the same fact with trivial wording changes.\n"
+
+                "6. For every question, exactly one option is correct according "
+                "to SOURCE_CONTENT.\n"
+
+                "7. The `correct` field identifies the option actually supported "
+                "by SOURCE_CONTENT.\n"
+
+                "8. The explanation is faithful to SOURCE_CONTENT and supports "
+                "the marked correct answer.\n"
+
+                "9. Reject any question, answer or explanation that requires "
+                "facts not present in SOURCE_CONTENT, even if those facts appear "
+                "reasonable from general model knowledge.\n"
+
+                "10. Reject fabricated claims, unsupported security advice, "
+                "hallucinated vulnerabilities or invented mitigations.\n"
+
+                "11. Reject ambiguous questions where SOURCE_CONTENT could "
+                "reasonably support more than one option.\n"
+
+                "12. The quiz must function as credible cybersecurity training "
+                "grounded in the named authoritative source."
+            )
+
+        else:
+            task = (
+                "Create exactly five multiple-choice cybersecurity "
+                "training questions for a Web3 learner.\n\n"
+
+                "The LEVEL, LEVEL_NAME and TOPIC in the supplied context "
+                "define the required subject matter and difficulty.\n\n"
+
+                "Return ONLY a valid JSON array containing exactly "
+                "five objects using this structure:\n"
+
+                '[{"question":"...",'
+                '"options":{"A":"...","B":"...","C":"...","D":"..."},'
+                '"correct":"A",'
+                '"explanation":"..."}, ...]\n\n'
+
+                "Rules:\n"
+                "- Every question must test cybersecurity knowledge "
+                "relevant to TOPIC.\n"
+                "- Difficulty must be appropriate for LEVEL.\n"
                 "- All five questions must be materially different.\n"
-                "- Each question must have exactly four options: A, B, C and D.\n"
-                "- Exactly one option must be clearly and factually correct.\n"
-                "- Incorrect options must be plausible but clearly wrong.\n"
-                "- The `correct` field must identify the genuinely correct option.\n"
-                "- The explanation must explain why that answer is correct.\n"
-                "- Avoid trick questions where multiple answers could reasonably "
-                "be considered correct.\n"
-                "- Do not include markdown or commentary outside the JSON array."
-            ),
-            criteria=(
-                "Validate the proposed quiz against the supplied LEVEL, "
-                "LEVEL_NAME and TOPIC.\n\n"
-                "Accept ONLY if ALL of the following are true:\n"
-                "1. The output is a valid JSON array containing exactly "
-                "five question objects.\n"
-                "2. Every object contains exactly these required concepts: "
-                "a question, four answer options A-D, one correct option, "
-                "and an explanation.\n"
-                "3. Every question is materially related to the cybersecurity "
-                "TOPIC supplied in the context.\n"
-                "4. The difficulty of the questions is reasonable for the "
-                "specified LEVEL and LEVEL_NAME.\n"
-                "5. The five questions are materially different from one another "
-                "and do not test the same fact using trivial rewording.\n"
-                "6. For every question, exactly one of A, B, C or D is clearly "
-                "and factually correct based on established cybersecurity or "
-                "Web3 security knowledge.\n"
-                "7. The `correct` field actually identifies that correct option. "
-                "Do not accept merely because the field contains A, B, C or D.\n"
-                "8. The other three answers are incorrect without being "
-                "nonsensical or obviously unrelated distractors.\n"
-                "9. The explanation accurately supports the marked correct "
-                "answer and does not contradict the options.\n"
-                "10. Reject ambiguous questions where more than one option "
-                "could reasonably be correct.\n"
-                "11. Reject fabricated security facts, unsafe misinformation, "
-                "or misleading explanations.\n"
-                "12. The proposed quiz must be useful as actual cybersecurity "
-                "training, not merely syntactically valid JSON."
-            ),
+                "- Each question must have exactly options A-D.\n"
+                "- Exactly one option must be clearly correct.\n"
+                "- Incorrect options must be plausible but wrong.\n"
+                "- Explanations must teach the relevant concept.\n"
+                "- Avoid ambiguous or trick questions.\n"
+                "- Return only JSON."
+            )
+
+            criteria = (
+                "Accept only if the proposed beginner quiz contains "
+                "exactly five valid, materially different cybersecurity "
+                "questions relevant to TOPIC, with appropriate LEVEL "
+                "difficulty, exactly four options A-D, one unambiguous "
+                "correct answer and a useful accurate explanation."
+            )
+
+        raw_result = (
+            gl.eq_principle
+            .prompt_non_comparative(
+                quiz_input,
+                task=task,
+                criteria=criteria,
+            )
         )
 
-        questions = self._validate_generated_questions(str(raw_result))
+        questions = (
+            self._validate_generated_questions(
+                str(raw_result)
+            )
+        )
 
-        for index, question in enumerate(questions):
+        for index, question in enumerate(
+            questions
+        ):
             q_id = q_ids[index]
 
             self.questions[q_id] = json.dumps({
@@ -465,6 +661,9 @@ class GenHunt(gl.Contract):
                 "correct": question["correct"],
                 "explanation": question["explanation"],
                 "level": level,
+                "grounded": grounded,
+                "source_name": source_name,
+                "source_url": source_url,
             })
 
         player[quiz_key] = {
@@ -476,9 +675,16 @@ class GenHunt(gl.Contract):
             "xp_earned": 0,
             "passed": False,
             "started_at": now_str,
+            "grounded": grounded,
+            "source_name": source_name,
+            "source_url": source_url,
         }
 
-        self._save_player(caller, player)
+        self._save_player(
+            caller,
+            player,
+        )
+
 
     @gl.public.write
     def submit_quiz_answers(self, level: str, answers: str) -> None:
@@ -591,10 +797,38 @@ class GenHunt(gl.Contract):
         quiz = player[quiz_key]
         status = quiz.get("status", "NOT_STARTED")
 
-        if status == "COMPLETED" and quiz.get("passed", False):
+        if status == "IN_PROGRESS":
+            raise gl.vm.UserError(
+                "Active quiz must be completed before retry"
+            )
+
+        if status != "COMPLETED":
+            raise gl.vm.UserError("Quiz is not retryable")
+
+        if quiz.get("passed", False):
             raise gl.vm.UserError(
                 "Completed levels cannot be retried for rewards"
             )
 
-        del player[quiz_key]
+        q_ids = quiz.get("q_ids", [])
+
+        if len(q_ids) != QUESTIONS_PER_LEVEL:
+            raise gl.vm.UserError("Quiz state is invalid")
+
+        for q_id in q_ids:
+            if self.questions.get(q_id, None) is None:
+                raise gl.vm.UserError(
+                    "Quiz question data is missing"
+                )
+
+        player[quiz_key] = {
+            "status": "IN_PROGRESS",
+            "q_ids": q_ids,
+            "answers": {},
+            "score": None,
+            "results": [],
+            "xp_earned": 0,
+            "passed": False,
+        }
+
         self._save_player(caller, player)
