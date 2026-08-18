@@ -18,7 +18,7 @@ def test_advanced_levels_have_fixed_authoritative_sources():
         assert f'"{level}": {{' in text
 
     assert "https://scs.owasp.org/" in text
-    assert "https://csrc.nist.gov/publications" in text
+    assert "https://csrc.nist.gov/Projects/cyber-supply-chain-risk-management" in text
     assert "https://attack.mitre.org/" in text
 
 

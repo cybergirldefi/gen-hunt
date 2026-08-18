@@ -8,7 +8,7 @@ Network: GenLayer Bradbury Testnet
 
 Contract address:
 
-0x537435BCF19df608CDa0Ae1dc535bd2f4888D2C1
+0x97e22FbA1Eaa58f1B75aDda182aF43259D8445b9
 
 Contract source:
 

@@ -1,4 +1,4 @@
-export const CONTRACT_ADDR = '0x537435BCF19df608CDa0Ae1dc535bd2f4888D2C1'
+export const CONTRACT_ADDR = '0x97e22FbA1Eaa58f1B75aDda182aF43259D8445b9'
 export const EXPLORER     = 'https://explorer-bradbury.genlayer.com'
 export const FAUCET       = 'https://testnet-faucet.genlayer.foundation'
 export const sh           = a => a?.length>10 ? a.slice(0,6)+'...'+a.slice(-4) : (a||'')

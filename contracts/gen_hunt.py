@@ -31,12 +31,12 @@ LEVEL_PASS_SCORE = {
 LEVEL_TOPICS = {
     "1": "password security, phishing attacks, two-factor authentication, basic online safety",
     "2": "crypto wallets, private keys, seed phrases, hardware wallets, wallet hygiene",
-    "3": "DeFi protocols, rug pulls, token approvals, DEX safety, smart contract interactions",
-    "4": "smart contract vulnerabilities, reentrancy attacks, integer overflow, access control flaws",
-    "5": "MEV attacks, flash loans, governance exploits, bridge vulnerabilities, advanced DeFi hacks",
-    "6": "zero-day exploits, side-channel attacks, memory corruption, supply chain attacks",
-    "7": "social engineering, OSINT techniques, identity theft, spear phishing, insider threats",
-    "8": "nation-state attacks, advanced persistent threats, critical infrastructure attacks, state-sponsored hacking",
+    "3": "smart contract security fundamentals, access control, business logic, external calls and safe contract interactions",
+    "4": "smart contract vulnerabilities, reentrancy attacks, access control flaws, arithmetic errors and unsafe external calls",
+    "5": "flash loan-facilitated attacks, DeFi exploit mechanics, oracle manipulation and flash loan mitigations",
+    "6": "cybersecurity supply chain risk, compromised dependencies, supplier risk, malicious components and supply chain mitigation",
+    "7": "phishing, spear phishing, malicious attachments, malicious links, phishing services and social engineering delivery",
+    "8": "advanced persistent threat groups, nation-state threat actors, ATT&CK techniques and state-sponsored campaigns",
 }
 
 LEVEL_NAMES = {
@@ -57,20 +57,20 @@ LEVEL_NAMES = {
 # Users cannot supply or replace these URLs.
 ADVANCED_LEVEL_SOURCES = {
     "3": {
-        "name": "OWASP Smart Contract Security",
-        "url": "https://scs.owasp.org/",
+        "name": "OWASP Smart Contract Top 10",
+        "url": "https://scs.owasp.org/sctop10/",
     },
     "4": {
-        "name": "OWASP Smart Contract Security",
-        "url": "https://scs.owasp.org/",
+        "name": "OWASP Smart Contract Top 10",
+        "url": "https://scs.owasp.org/sctop10/",
     },
     "5": {
-        "name": "OWASP Smart Contract Security",
-        "url": "https://scs.owasp.org/",
+        "name": "OWASP Flash Loan-Facilitated Attacks",
+        "url": "https://scs.owasp.org/sctop10/SC04-FlashLoanAttacks/",
     },
     "6": {
-        "name": "NIST Cybersecurity Publications",
-        "url": "https://csrc.nist.gov/publications",
+        "name": "NIST Cybersecurity Supply Chain Risk Management",
+        "url": "https://csrc.nist.gov/Projects/cyber-supply-chain-risk-management",
     },
     "7": {
         "name": "MITRE ATT&CK - Phishing",
@@ -345,6 +345,8 @@ class GenHunt(gl.Contract):
             "results": quiz.get("results", []),
             "xp_earned": quiz.get("xp_earned", 0),
             "passed": quiz.get("passed", False),
+            "reward_eligible": quiz.get("reward_eligible", True),
+            "practice_retry": quiz.get("practice_retry", False),
             "grounded": quiz.get("grounded", False),
             "source_name": quiz.get("source_name", ""),
             "source_url": quiz.get("source_url", ""),
@@ -476,11 +478,11 @@ class GenHunt(gl.Contract):
                 source_url
             )
 
-            status_code = response.status
+            status = response.status
 
             if (
-                status_code < 200
-                or status_code >= 300
+                status < 200
+                or status >= 300
             ):
                 raise gl.vm.UserError(
                     "Authoritative source unavailable"
@@ -674,6 +676,8 @@ class GenHunt(gl.Contract):
             "results": [],
             "xp_earned": 0,
             "passed": False,
+            "reward_eligible": True,
+            "practice_retry": False,
             "started_at": now_str,
             "grounded": grounded,
             "source_name": source_name,
@@ -707,22 +711,40 @@ class GenHunt(gl.Contract):
         if len(q_ids) != QUESTIONS_PER_LEVEL:
             raise gl.vm.UserError("Quiz state is invalid")
 
-        answers_dict = self._validate_answers(answers, len(q_ids))
+        answers_dict = self._validate_answers(
+            answers,
+            len(q_ids),
+        )
+
         now_str = gl.message_raw["datetime"]
 
         results = []
         correct_count = 0
 
         for index, q_id in enumerate(q_ids):
-            raw_question = self.questions.get(q_id, None)
+            raw_question = self.questions.get(
+                q_id,
+                None,
+            )
 
             if raw_question is None:
-                raise gl.vm.UserError("Quiz question data is missing")
+                raise gl.vm.UserError(
+                    "Quiz question data is missing"
+                )
 
             question = json.loads(raw_question)
+
             user_answer = answers_dict[str(index)]
-            correct_answer = str(question["correct"]).upper().strip()
-            is_correct = user_answer == correct_answer
+
+            correct_answer = (
+                str(question["correct"])
+                .upper()
+                .strip()
+            )
+
+            is_correct = (
+                user_answer == correct_answer
+            )
 
             if is_correct:
                 correct_count += 1
@@ -738,34 +760,77 @@ class GenHunt(gl.Contract):
 
         pass_score = LEVEL_PASS_SCORE[level]
         passed = correct_count >= pass_score
+
+        # First attempt is reward-bearing.
+        # Once answers have been exposed by a failed attempt,
+        # retries are permanently unrewarded practice.
+        reward_eligible = quiz.get(
+            "reward_eligible",
+            True,
+        )
+
         xp_earned = 0
 
         if passed:
-            base_xp = LEVEL_XP_REWARD[level]
-            xp_earned = correct_count * base_xp
+            if reward_eligible:
+                base_xp = LEVEL_XP_REWARD[level]
 
-            if correct_count == QUESTIONS_PER_LEVEL:
-                xp_earned += 100
-                player["streak"] += 1
+                xp_earned = (
+                    correct_count * base_xp
+                )
 
-                if player["streak"] > player["best_streak"]:
-                    player["best_streak"] = player["streak"]
+                if (
+                    correct_count
+                    == QUESTIONS_PER_LEVEL
+                ):
+                    xp_earned += 100
+                    player["streak"] += 1
+
+                    if (
+                        player["streak"]
+                        > player["best_streak"]
+                    ):
+                        player["best_streak"] = (
+                            player["streak"]
+                        )
+                else:
+                    player["streak"] = 0
             else:
+                # Practice retries can prove completion,
+                # but never produce rewards or streaks.
                 player["streak"] = 0
 
             if level not in player["levels_completed"]:
-                player["levels_completed"].append(level)
-                next_level = str(int(level) + 1)
+                player["levels_completed"].append(
+                    level
+                )
+
+                next_level = str(
+                    int(level) + 1
+                )
 
                 if next_level in LEVEL_TOPICS:
-                    if player["level"] < int(next_level):
-                        player["level"] = int(next_level)
-                        xp_earned += 500
+                    if (
+                        player["level"]
+                        < int(next_level)
+                    ):
+                        player["level"] = int(
+                            next_level
+                        )
+
+                        # Progression bonus is also disabled
+                        # for an unrewarded retry.
+                        if reward_eligible:
+                            xp_earned += 500
 
             player["xp"] += xp_earned
 
         else:
             player["streak"] = 0
+
+            # The results below reveal the answer key.
+            # Therefore this quiz can never award XP again.
+            reward_eligible = False
 
         player["total_correct"] += correct_count
         player["total_answered"] += len(q_ids)
@@ -779,9 +844,26 @@ class GenHunt(gl.Contract):
             "xp_earned": xp_earned,
             "passed": passed,
             "completed_at": now_str,
+            "reward_eligible": reward_eligible,
+            "practice_retry": not reward_eligible,
+            "grounded": quiz.get(
+                "grounded",
+                False,
+            ),
+            "source_name": quiz.get(
+                "source_name",
+                "",
+            ),
+            "source_url": quiz.get(
+                "source_url",
+                "",
+            ),
         }
 
-        self._save_player(caller, player)
+        self._save_player(
+            caller,
+            player,
+        )
 
     @gl.public.write
     def retry_quiz(self, level: str) -> None:
@@ -792,10 +874,15 @@ class GenHunt(gl.Contract):
         quiz_key = "quiz_" + level
 
         if quiz_key not in player:
-            raise gl.vm.UserError("No quiz to retry")
+            raise gl.vm.UserError(
+                "No quiz to retry"
+            )
 
         quiz = player[quiz_key]
-        status = quiz.get("status", "NOT_STARTED")
+        status = quiz.get(
+            "status",
+            "NOT_STARTED",
+        )
 
         if status == "IN_PROGRESS":
             raise gl.vm.UserError(
@@ -803,7 +890,9 @@ class GenHunt(gl.Contract):
             )
 
         if status != "COMPLETED":
-            raise gl.vm.UserError("Quiz is not retryable")
+            raise gl.vm.UserError(
+                "Quiz is not retryable"
+            )
 
         if quiz.get("passed", False):
             raise gl.vm.UserError(
@@ -813,14 +902,22 @@ class GenHunt(gl.Contract):
         q_ids = quiz.get("q_ids", [])
 
         if len(q_ids) != QUESTIONS_PER_LEVEL:
-            raise gl.vm.UserError("Quiz state is invalid")
+            raise gl.vm.UserError(
+                "Quiz state is invalid"
+            )
 
         for q_id in q_ids:
-            if self.questions.get(q_id, None) is None:
+            if self.questions.get(
+                q_id,
+                None,
+            ) is None:
                 raise gl.vm.UserError(
                     "Quiz question data is missing"
                 )
 
+        # A failed attempt has already exposed correct
+        # answers and explanations. Reopening this quiz
+        # is therefore Practice Mode only.
         player[quiz_key] = {
             "status": "IN_PROGRESS",
             "q_ids": q_ids,
@@ -829,6 +926,23 @@ class GenHunt(gl.Contract):
             "results": [],
             "xp_earned": 0,
             "passed": False,
+            "reward_eligible": False,
+            "practice_retry": True,
+            "grounded": quiz.get(
+                "grounded",
+                False,
+            ),
+            "source_name": quiz.get(
+                "source_name",
+                "",
+            ),
+            "source_url": quiz.get(
+                "source_url",
+                "",
+            ),
         }
 
-        self._save_player(caller, player)
+        self._save_player(
+            caller,
+            player,
+        )
