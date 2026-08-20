@@ -115,6 +115,7 @@ export default function SoloMode({ account, connected, player, notify, loadPlaye
   const [resumeChecking, setResumeChecking] = useState(true)
   const [activeQuizLevel, setActiveQuizLevel] = useState(null)
   const [practiceMode, setPracticeMode] = useState(false)
+  const [practiceRetry, setPracticeRetry] = useState(false)
   const [openingLevel, setOpeningLevel] = useState(null)
 
   if (!connected) return (
@@ -185,6 +186,7 @@ export default function SoloMode({ account, connected, player, notify, loadPlaye
     )
 
     setPracticeMode(false)
+    setPracticeRetry(Boolean(status.practice_retry))
     setActiveLevel(parseInt(levelString))
     setActiveQuizLevel(parseInt(levelString))
     setQIds(status.q_ids)
@@ -297,6 +299,7 @@ export default function SoloMode({ account, connected, player, notify, loadPlaye
       }
 
       setPracticeMode(false)
+      setPracticeRetry(false)
       setPhase('generating')
       setActiveLevel(level)
       setAnswers({})
@@ -596,8 +599,8 @@ export default function SoloMode({ account, connected, player, notify, loadPlaye
         String(activeLevel),
       )
 
-      setActiveQuizLevel(null)
-
+      // Keep activeLevel while the results screen is open.
+      // Retry needs the completed quiz's level.
       await loadPlayer(account)
 
       setPhase('results')
@@ -853,6 +856,7 @@ export default function SoloMode({ account, connected, player, notify, loadPlaye
                     setQuestions([])
                     setAnswers({})
                     setPracticeMode(false)
+                    setPracticeRetry(false)
                   }}>
             Back
           </button>
@@ -884,6 +888,24 @@ export default function SoloMode({ account, connected, player, notify, loadPlaye
         </div>
 
         {/* Question number dots */}
+        {practiceRetry && (
+          <div style={{
+            marginBottom:18,
+            padding:'10px 14px',
+            borderRadius:10,
+            textAlign:'center',
+            fontFamily:'JetBrains Mono',
+            fontSize:12,
+            fontWeight:700,
+            letterSpacing:'0.4px',
+            color:'var(--amber)',
+            background:'rgba(245,158,11,0.08)',
+            border:'1px solid rgba(245,158,11,0.22)',
+          }}>
+            PRACTICE RETRY · 0 XP
+          </div>
+        )}
+
         <div style={{ display:'flex', gap:6, marginBottom:24, justifyContent:'center' }}>
           {questions.map((_,i) => (
             <div key={i} onClick={() => {
@@ -954,7 +976,9 @@ export default function SoloMode({ account, connected, player, notify, loadPlaye
                 ? 'Check Answers'
                 : txBusy
                   ? <><span className="spin-el"/>Submitting...</>
-                  : 'Submit Answers'}
+                  : practiceRetry
+                    ? 'Submit Practice Retry'
+                    : 'Submit Answers'}
             </button>
           )}
         </div>
@@ -1012,6 +1036,18 @@ export default function SoloMode({ account, connected, player, notify, loadPlaye
               PRACTICE · 0 XP · progression unchanged
             </div>
           )}
+
+          {practiceRetry && (
+            <div style={{
+              fontSize:12,
+              color:'var(--amber)',
+              fontFamily:'JetBrains Mono',
+              fontWeight:700,
+              marginTop:6,
+            }}>
+              PRACTICE RETRY · 0 XP · answers previously revealed
+            </div>
+          )}
         </div>
 
         <div style={{ display:'flex', flexDirection:'column', gap:10, marginBottom:24 }}>
@@ -1066,6 +1102,7 @@ export default function SoloMode({ account, connected, player, notify, loadPlaye
                     setAnswers({})
                     setResults(null)
                     setPracticeMode(false)
+                    setPracticeRetry(false)
                   }}>
               Next Level
             </button>
@@ -1094,6 +1131,7 @@ export default function SoloMode({ account, connected, player, notify, loadPlaye
                     setAnswers({})
                     setResults(null)
                     setPracticeMode(false)
+                    setPracticeRetry(false)
                   }}>
             All Levels
           </button>
